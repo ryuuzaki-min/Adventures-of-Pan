@@ -6,7 +6,7 @@ on:
   push:
     branches: [main]
     paths:
-      - 'proyek.zip'
+      - '**.zip'
       - '.github/workflows/rakit-apk.yml'
   workflow_dispatch:
 
@@ -24,11 +24,23 @@ jobs:
       - name: Ambil isi repo
         uses: actions/checkout@v4
 
-      - name: Buka proyek.zip dan baca versi
+      - name: Buka proyek dan baca versi
         run: |
           set -e
-          test -f proyek.zip || { echo "::error::proyek.zip belum diunggah ke repo."; exit 1; }
-          rm -rf src && mkdir src && unzip -q proyek.zip -d src
+          # Cari proyek: proyek.zip, atau zip lain yang berisi proyek.zip (misalnya pulau-tebak-apk.zip),
+          # atau zip yang langsung berisi versi.txt dan folder android. Yang paling baru diubah dipakai.
+          rm -rf src tmpzip && mkdir src tmpzip
+          FOUND=""
+          for z in $(git ls-files '*.zip' | while read f; do echo "$(git log -1 --format=%ct -- "$f") $f"; done | sort -rn | cut -d' ' -f2-); do
+            if unzip -l "$z" | grep -qE '(^|[[:space:]])versi\.txt$'; then unzip -q "$z" -d src; FOUND="$z"; break; fi
+            if unzip -l "$z" | grep -qE '(^|[[:space:]/])proyek\.zip$'; then
+              inner=$(unzip -l "$z" | grep -oE '[^[:space:]]*proyek\.zip$' | head -1)
+              unzip -q -o "$z" "$inner" -d tmpzip && unzip -q "tmpzip/$inner" -d src; FOUND="$z > $inner"; break
+            fi
+          done
+          [ -n "$FOUND" ] || { echo "::error::Tidak ada zip proyek di repo. Unggah proyek.zip atau pulau-tebak-apk.zip."; exit 1; }
+          echo "Memakai: $FOUND"
+          test -f src/versi.txt && test -d src/android || { echo "::error::Isi zip tidak lengkap (versi.txt atau folder android tidak ada)."; exit 1; }
           VER=$(tr -d ' \r\n' < src/versi.txt)
           echo "$VER" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::Isi versi.txt harus seperti 1.0.0, bukan '$VER'."; exit 1; }
           IFS=. read MA MI PA <<< "$VER"
