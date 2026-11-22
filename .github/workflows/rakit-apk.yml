@@ -1,4 +1,7 @@
-name: Rakit APK Pulau Tebak
+name: Rakit Petualangan Panpan dan Akapan
+# Menghasilkan dua berkas di setiap rilis:
+#  - petualangan-panpan-akapan.apk       : dipasang langsung; memberi tahu kalau ada versi baru
+#  - petualangan-panpan-akapan-play.aab  : diunggah ke Google Play Console
 
 # Jalan otomatis setiap kali proyek.zip atau berkas ini diganti di cabang main.
 # Bisa juga dijalankan manual dari tab Actions (tombol "Run workflow").
@@ -27,18 +30,25 @@ jobs:
       - name: Buka proyek dan baca versi
         run: |
           set -e
-          # Cari proyek: proyek.zip, atau zip lain yang berisi proyek.zip (misalnya pulau-tebak-apk.zip),
-          # atau zip yang langsung berisi versi.txt dan folder android. Yang paling baru diubah dipakai.
-          rm -rf src tmpzip && mkdir src tmpzip
-          FOUND=""
-          for z in $(git ls-files '*.zip' | while read f; do echo "$(git log -1 --format=%ct -- "$f") $f"; done | sort -rn | cut -d' ' -f2-); do
-            if unzip -l "$z" | grep -qE '(^|[[:space:]])versi\.txt$'; then unzip -q "$z" -d src; FOUND="$z"; break; fi
-            if unzip -l "$z" | grep -qE '(^|[[:space:]/])proyek\.zip$'; then
+          # Cari semua zip proyek di repo: zip yang langsung berisi versi.txt + android/,
+          # atau zip yang berisi proyek.zip di dalamnya. Yang dipakai: yang ANGKA VERSINYA PALING TINGGI.
+          # (Tidak memakai tanggal commit, karena checkout GitHub hanya mengambil satu commit terakhir.)
+          rm -rf src tmpzip cand && mkdir src tmpzip cand
+          BEST="";BESTV="0.0.0";n=0
+          while IFS= read -r z; do
+            n=$((n+1));d="cand/$n";mkdir -p "$d"
+            if unzip -l "$z" | grep -qE '(^|[[:space:]])versi\.txt$'; then unzip -q "$z" -d "$d"
+            elif unzip -l "$z" | grep -qE '(^|[[:space:]/])proyek\.zip$'; then
               inner=$(unzip -l "$z" | grep -oE '[^[:space:]]*proyek\.zip$' | head -1)
-              unzip -q -o "$z" "$inner" -d tmpzip && unzip -q "tmpzip/$inner" -d src; FOUND="$z > $inner"; break
-            fi
-          done
-          [ -n "$FOUND" ] || { echo "::error::Tidak ada zip proyek di repo. Unggah proyek.zip atau pulau-tebak-apk.zip."; exit 1; }
+              unzip -q -o "$z" "$inner" -d "tmpzip/$n" && unzip -q "tmpzip/$n/$inner" -d "$d"
+            else continue; fi
+            [ -f "$d/versi.txt" ] && [ -d "$d/android" ] || continue
+            V=$(tr -d ' \r\n' < "$d/versi.txt"); echo "Ditemukan: $z (versi $V)"
+            if [ "$(printf '%s\n%s\n' "$BESTV" "$V" | sort -V | tail -1)" = "$V" ] && [ "$V" != "$BESTV" -o -z "$BEST" ]; then BEST="$z";BESTV="$V";BESTD="$d"; fi
+          done < <(git ls-files '*.zip')
+          FOUND="$BEST"
+          [ -n "$FOUND" ] || { echo "::error::Tidak ada zip proyek di repo. Unggah proyek.zip."; exit 1; }
+          cp -r "$BESTD"/. src/
           echo "Memakai: $FOUND"
           test -f src/versi.txt && test -d src/android || { echo "::error::Isi zip tidak lengkap (versi.txt atau folder android tidak ada)."; exit 1; }
           VER=$(tr -d ' \r\n' < src/versi.txt)
@@ -77,27 +87,28 @@ jobs:
       - name: Siapkan Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: '8.7'
+          gradle-version: '8.13'
 
-      - name: Rakit APK
+      - name: Rakit APK dan AAB
         working-directory: src/android
         env:
           KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
           KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
           KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
-        run: gradle assembleRelease --no-daemon --stacktrace
+        run: gradle assembleGithubRelease bundlePlayRelease --no-daemon --stacktrace
 
       - name: Terbitkan rilis
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -e
-          cp src/android/app/build/outputs/apk/release/app-release.apk pulau-tebak.apk
+          cp src/android/app/build/outputs/apk/github/release/app-github-release.apk petualangan-panpan-akapan.apk
+          cp src/android/app/build/outputs/bundle/playRelease/app-play-release.aab petualangan-panpan-akapan-play.aab
           NOTES=src/catatan-rilis.txt
-          [ -f "$NOTES" ] || { echo "Pembaruan Pulau Tebak." > notes.txt; NOTES=notes.txt; }
-          gh release create "v$VERSION_NAME" pulau-tebak.apk \
+          [ -f "$NOTES" ] || { echo "Pembaruan Petualangan Panpan dan Akapan." > notes.txt; NOTES=notes.txt; }
+          gh release create "v$VERSION_NAME" petualangan-panpan-akapan.apk petualangan-panpan-akapan-play.aab \
             --repo "$GITHUB_REPOSITORY" \
-            --title "Pulau Tebak $VERSION_NAME" \
+            --title "Petualangan Panpan dan Akapan $VERSION_NAME" \
             --notes-file "$NOTES" \
             --latest
-          echo "Tautan unduh tetap: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/pulau-tebak.apk"
+          echo "Tautan unduh tetap: https://github.com/$GITHUB_REPOSITORY/releases/latest/download/petualangan-panpan-akapan.apk"
